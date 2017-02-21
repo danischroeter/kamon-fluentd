@@ -2,8 +2,7 @@ Fluentd Integration    ![Build Status](https://travis-ci.org/kamon-io/kamon-flue
 ==========================
 
 [![Gitter](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/kamon-io/Kamon?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
-
-***kamon-fluentd*** [![Maven Central](https://maven-badges.herokuapp.com/maven-central/io.kamon/kamon-fluentd_2.11/badge.svg)](https://maven-badges.herokuapp.com/maven-central/io.kamon/kamon-fluentd_2.11)
+[![Maven Central](https://maven-badges.herokuapp.com/maven-central/io.kamon/kamon-fluentd_2.11/badge.svg)](https://maven-badges.herokuapp.com/maven-central/io.kamon/kamon-fluentd_2.11)
 
 Reporting Metrics to Fluentd
 ===========================
@@ -17,6 +16,22 @@ Installation
 Add the `kamon-fluentd` dependency to your project and ensure that it is in your classpath at runtime, that's it.
 Kamon's module loader will detect that the Fluentd module is in the classpath and automatically start it.
 
+### Getting Started
+
+Kamon kamon-fluentd module is currently available for Scala 2.10, 2.11 and 2.12.
+
+Supported releases and dependencies are shown below.
+
+| kamon-fluentd  | status | jdk  | scala            |
+|:------:|:------:|:----:|------------------|
+|  0.6.5 | stable | 1.8+ |  2.10, 2.11, 2.12  |
+
+To get started with SBT, simply add the following to your `build.sbt`
+file:
+
+```scala
+libraryDependencies += "io.kamon" %% "kamon-fluentd " % "0.6.5"
+```
 
 Configuration
 -------------
@@ -25,7 +40,7 @@ By default, this module assumes that you have an instance of the Fluentd daemon 
 
 The Fluentd module subscribes itself to the entities included in the `kamon.fluentd.subscriptions` key. By default, the following subscriptions are included:
 
-{% code_block typesafeconfig %}
+```typesafeconfig
 kamon.fluentd {
   subscriptions {
     histogram       = [ "**" ]
@@ -41,7 +56,7 @@ kamon.fluentd {
     http-server     = [ "**" ]
   }
 }
-{% endcode_block %}
+```
 
 If you are interested in reporting additional entities to Fluentd please ensure that you include the categories and name patterns accordingly.
 

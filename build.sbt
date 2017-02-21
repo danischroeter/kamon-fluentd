@@ -1,5 +1,5 @@
 /* =========================================================================================
- * Copyright © 2013-2016 the kamon project <http://kamon.io/>
+ * Copyright © 2013-2017 the kamon project <http://kamon.io/>
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
  * except in compliance with the License. You may obtain a copy of the License at
@@ -14,14 +14,21 @@
  */
 
 
-import Settings._
-import Dependencies._
+val akkaVersion210    = "2.3.16"
+val akkaVersion212    = "2.4.16"
 
-lazy val root = (project in file("."))
-  .settings(name := "kamon-fluentd")
-  .settings(basicSettings: _*)
-  .settings(formatSettings: _*)
-  .settings(
-      libraryDependencies ++=
-        compileScope(kamonCore, akkaDependency("actor").value, fluentdLogger) ++
-        testScope(scalatest, akkaDependency("testkit").value, easyMock, slf4jApi, slf4jnop))
+val kamonCore         = "io.kamon"                  %%  "kamon-core"            % "0.6.6"
+val fluentdLogger     = "org.fluentd"               %%  "fluent-logger-scala"   % "0.7.0"
+val easyMock          = "org.easymock"              %   "easymock"              % "3.2"
+
+name := "kamon-fluentd"
+
+parallelExecution in Test in Global := false
+
+crossScalaVersions := Seq("2.11.8", "2.12.1")
+
+libraryDependencies ++=
+  compileScope(kamonCore, akkaDependency("actor").value, fluentdLogger) ++
+  testScope(scalatest, akkaDependency("testkit").value, easyMock, slf4jApi, slf4jnop)
+
+resolvers += Resolver.bintrayRepo("kamon-io", "releases")
