@@ -18,13 +18,13 @@ Kamon's module loader will detect that the Fluentd module is in the classpath an
 
 ### Getting Started
 
-Kamon kamon-fluentd module is currently available for Scala 2.10, 2.11 and 2.12.
+Kamon kamon-fluentd module is currently available for Scala 2.11 and 2.12.
 
 Supported releases and dependencies are shown below.
 
 | kamon-fluentd  | status | jdk  | scala            |
 |:------:|:------:|:----:|------------------|
-|  0.6.5 | stable | 1.8+ |  2.10, 2.11, 2.12  |
+|  0.6.5 | stable | 1.8+ |  2.11, 2.12  |
 
 To get started with SBT, simply add the following to your `build.sbt`
 file:
