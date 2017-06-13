@@ -17,7 +17,7 @@
 val akkaVersion210    = "2.3.16"
 val akkaVersion212    = "2.4.16"
 
-val kamonCore         = "io.kamon"                  %%  "kamon-core"            % "0.6.6"
+val kamonCore         = "io.kamon"                  %%  "kamon-core"            % "0.6.7"
 val fluentdLogger     = "org.fluentd"               %%  "fluent-logger-scala"   % "0.7.0"
 val easyMock          = "org.easymock"              %   "easymock"              % "3.2"
 

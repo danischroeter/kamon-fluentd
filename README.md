@@ -24,13 +24,13 @@ Supported releases and dependencies are shown below.
 
 | kamon-fluentd  | status | jdk  | scala            |
 |:------:|:------:|:----:|------------------|
-|  0.6.6 | stable | 1.8+ |  2.11, 2.12  |
+|  0.6.7 | stable | 1.8+ |  2.11, 2.12  |
 
 To get started with SBT, simply add the following to your `build.sbt`
 file:
 
 ```scala
-libraryDependencies += "io.kamon" %% "kamon-fluentd " % "0.6.6"
+libraryDependencies += "io.kamon" %% "kamon-fluentd " % "0.6.7"
 ```
 
 Configuration
