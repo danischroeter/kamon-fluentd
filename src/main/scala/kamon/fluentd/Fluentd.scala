@@ -15,193 +15,225 @@
 
 package kamon.fluentd
 
-import akka.actor._
-import akka.event.Logging
-import kamon.Kamon
-import kamon.metric.SubscriptionsDispatcher.TickMetricSnapshot
-import kamon.metric._
-import kamon.metric.instrument.{ Counter, Histogram }
-import kamon.util.ConfigTools.Syntax
-import kamon.util.MilliTimestamp
+import java.time.Instant
+
+import com.typesafe.config.Config
+import kamon.fluentd.FluentdReporter._
+import kamon.metric.PeriodSnapshot
+import kamon.{Kamon, MetricReporter}
 import org.fluentd.logger.scala.FluentLogger
-import org.fluentd.logger.scala.sender.{ ScalaRawSocketSender, Sender }
+import org.fluentd.logger.scala.sender.ScalaRawSocketSender
+import org.slf4j.LoggerFactory
 
 import scala.collection.JavaConverters._
-import scala.concurrent.duration.FiniteDuration
 
-object Fluentd extends ExtensionId[FluentdExtension] with ExtensionIdProvider {
-  override def lookup(): ExtensionId[_ <: Extension] = Fluentd
 
-  override def createExtension(system: ExtendedActorSystem): FluentdExtension = new FluentdExtension(system)
-}
+class FluentdReporter private[fluentd](private var f: FluentdWriter) extends MetricReporter {
 
-class FluentdExtension(system: ExtendedActorSystem) extends Kamon.Extension {
-  private val fluentdConfig = system.settings.config.getConfig("kamon.fluentd")
-  val host = fluentdConfig.getString("hostname")
-  val port = fluentdConfig.getInt("port")
-  val tag = fluentdConfig.getString("tag")
-  val flushInterval = fluentdConfig.getFiniteDuration("flush-interval")
-  val tickInterval = Kamon.metrics.settings.tickInterval
-  val subscriptions = fluentdConfig.getConfig("subscriptions")
-  val histogramStatsConfig = new HistogramStatsConfig(
-    fluentdConfig.getStringList("histogram-stats.subscription").asScala.toList,
-    fluentdConfig.getDoubleList("histogram-stats.percentiles").asScala.toList.map(_.toDouble))
+  def this() = this(new FluentdWriter(FluentdReporter.readConfiguration(Kamon.config())))
 
-  val log = Logging(system, classOf[FluentdExtension])
-  log.info("Starting the Kamon(Fluentd) extension")
-
-  val subscriber = buildMetricsListener(flushInterval, tickInterval, tag, host, port, histogramStatsConfig)
-  subscriptions.firstLevelKeys foreach { subscriptionCategory ⇒
-    subscriptions.getStringList(subscriptionCategory).asScala.foreach { pattern ⇒
-      Kamon.metrics.subscribe(subscriptionCategory, pattern, subscriber, permanently = true)
-    }
+  //  def buildMetricsListener(flushInterval: FiniteDuration, tickInterval: FiniteDuration,
+  //                           tag: String, host: String, port: Int,
+  //                           histogramStatsConfig: HistogramStatsConfig): ActorRef = {
+  //    assert(flushInterval >= tickInterval, "Fluentd flush-interval needs to be equal or greater to the tick-interval")
+  //
+  //    val metricsSender = system.actorOf(
+  //      Props(new FluentdMetricsSender(tag, host, port, histogramStatsConfig)),
+  //      "kamon-fluentd")
+  //    if (flushInterval == tickInterval) {
+  //      metricsSender
+  //    } else {
+  //      system.actorOf(TickMetricSnapshotBuffer.props(flushInterval, metricsSender), "kamon-fluentd-buffer")
+  //    }
+  //  }
+  override def start(): Unit = logger.info("Started the Kamon Fluentd reporter")
+  override def stop(): Unit = logger.info("Stopped the Kamon Fluentd reporter")
+  override def reconfigure(config: Config): Unit = {
+    f = new FluentdWriter(FluentdReporter.readConfiguration(config()))
   }
 
-  def buildMetricsListener(flushInterval: FiniteDuration, tickInterval: FiniteDuration,
-    tag: String, host: String, port: Int,
-    histogramStatsConfig: HistogramStatsConfig): ActorRef = {
-    assert(flushInterval >= tickInterval, "Fluentd flush-interval needs to be equal or greater to the tick-interval")
+  override def reportPeriodSnapshot(snapshot: PeriodSnapshot): Unit = {
+    val time = snapshot.to
+    for (counter <- snapshot.metrics.counters) {
+      //config.packetBuffer.appendMeasurement(counter.name, config.measurementFormatter.formatMeasurement(encodeDatadogCounter(counter.value, counter.unit), counter.tags))
 
-    val metricsSender = system.actorOf(
-      Props(new FluentdMetricsSender(tag, host, port, histogramStatsConfig)),
-      "kamon-fluentd")
-    if (flushInterval == tickInterval) {
-      metricsSender
-    } else {
-      system.actorOf(TickMetricSnapshotBuffer.props(flushInterval, metricsSender), "kamon-fluentd-buffer")
-    }
-  }
-}
-
-class FluentdMetricsSender(val tag: String, val host: String, val port: Int, histogramStatsConfig: HistogramStatsConfig)
-    extends Actor with ActorLogging with FluentLoggerSenderProvider {
-
-  private val config = context.system.settings.config
-  val appName = config.getString("kamon.fluentd.application-name")
-  val histogramStatsBuilder = HistogramStatsBuilder(histogramStatsConfig)
-  lazy val fluentd = FluentLogger(tag, sender(host, port))
-
-  def receive = {
-    case tick: TickMetricSnapshot ⇒ sendMetricSnapshotToFluentd(tick)
-  }
-
-  def sendMetricSnapshotToFluentd(tick: TickMetricSnapshot): Unit = {
-    val time = tick.to
-    for {
-      (groupIdentity, groupSnapshot) ← tick.metrics
-      (metricIdentity, metricSnapshot) ← groupSnapshot.metrics
-    } {
-
-      val fluentdTagName = fluentdTagNameFor(groupIdentity, metricIdentity)
+      //      val fluentdTagName = if (isSingleInstrumentEntity(entity)) {
+      //        s"$appName.${entity.category}.${entity.name}"
+      //      } else {
+      //        s"$appName.${entity.category}.${entity.name}.${metricKey.name}"
+      //      }
+      //    }
 
       val attrs = Map(
-        "app.name" -> appName,
-        "category.name" -> groupIdentity.category,
-        "entity.name" -> groupIdentity.name,
-        "metric.name" -> metricIdentity.name,
-        "unit_of_measurement.name" -> metricIdentity.unitOfMeasurement.name,
-        "unit_of_measurement.label" -> metricIdentity.unitOfMeasurement.label) ++ groupIdentity.tags.map(kv ⇒ s"tags.${kv._1}" -> kv._2)
+        "app" -> f.config.appName,
+        "metric" -> counter.name,
+        "unit" -> counter.unit,
+        "value" -> counter.value,
+        "tags" -> counter.tags)
 
-      metricSnapshot match {
-        case hs: Histogram.Snapshot ⇒
-          if (hs.numberOfMeasurements > 0) {
-            histogramStatsBuilder.buildStats(hs) foreach {
-              case (_name, value) ⇒
-                log_fluentd(time, fluentdTagName, _name, value, attrs)
-            }
-            fluentd.flush()
-          }
-        case cs: Counter.Snapshot ⇒
-          if (cs.count > 0) {
-            log_fluentd(time, fluentdTagName, "count", cs.count, attrs)
-            fluentd.flush()
-          }
-      }
+      //todo allow to config if 0 is sent
+      //                if (cs.count > 0) {
+      log_fluentd(time, fluentdTagName, "count", cs.count, attrs)
+      //                  fluentd.flush()
+      //                }
+
+
     }
+
+    for (gauge <- snapshot.metrics.gauges) {
+      //config.packetBuffer.appendMeasurement(gauge.name, config.measurementFormatter.formatMeasurement(encodeDatadogGauge(gauge.value, gauge.unit), gauge.tags))
+
+    }
+
+    for (
+      metric <- snapshot.metrics.histograms ++ snapshot.metrics.rangeSamplers;
+      bucket <- metric.distribution.bucketsIterator
+    ) {
+
+      //      val bucketData = config.measurementFormatter.formatMeasurement(encodeDatadogHistogramBucket(bucket.value, bucket.frequency, metric.unit), metric.tags)
+      //      config.packetBuffer.appendMeasurement(metric.name, bucketData)
+    }
+
+    //strategy to flush each or send per batch ->batch default...
+    f.fluentd.flush()
+
+    //    val time = snapshot.to
+    //    for {
+    //      (groupIdentity, groupSnapshot) ← snapshot.metrics
+    //      (metricIdentity, metricSnapshot) ← groupSnapshot.metrics
+    //    } {
+    //
+    //      val fluentdTagName = fluentdTagNameFor(groupIdentity, metricIdentity)
+    //
+    //      val attrs = Map(
+    //        "app.name" -> appName,
+    //        "category.name" -> groupIdentity.category,
+    //        "entity.name" -> groupIdentity.name,
+    //        "metric.name" -> metricIdentity.name,
+    //        "unit_of_measurement.name" -> metricIdentity.unitOfMeasurement.name,
+    //        "unit_of_measurement.label" -> metricIdentity.unitOfMeasurement.label) ++ groupIdentity.tags.map(kv ⇒ s"tags.${kv._1}" -> kv._2)
+    //
+    //      metricSnapshot match {
+    //        case hs: Histogram.Snapshot ⇒
+    //          if (hs.numberOfMeasurements > 0) {
+    //            histogramStatsBuilder.buildStats(hs) foreach {
+    //              case (_name, value) ⇒
+    //                log_fluentd(time, fluentdTagName, _name, value, attrs)
+    //            }
+    //            fluentd.flush()
+    //          }
+    //        case cs: Counter.Snapshot ⇒
+    //          if (cs.count > 0) {
+    //            log_fluentd(time, fluentdTagName, "count", cs.count, attrs)
+    //            fluentd.flush()
+    //          }
+    //      }
+    //    }
   }
 
-  private def log_fluentd(time: MilliTimestamp, fluentdTagName: String, statsName: String, value: Any,
-    attrs: Map[String, String] = Map.empty) = {
-    fluentd.log(
+  private def log_fluentd(time: Instant, fluentdTagName: String, statsName: String, value: Any, attrs: Map[String, String] = Map.empty) = {
+    f.fluentd.log(
       fluentdTagName,
       attrs ++ Map(
         "stats.name" -> statsName,
         "value" -> value,
         "canonical_metric.name" -> (fluentdTagName + "." + statsName),
         (fluentdTagName + "." + statsName) -> value),
-      time.millis / 1000)
-  }
-
-  private def isSingleInstrumentEntity(entity: Entity): Boolean =
-    SingleInstrumentEntityRecorder.AllCategories.contains(entity.category)
-
-  private def fluentdTagNameFor(entity: Entity, metricKey: MetricKey): String = {
-    if (isSingleInstrumentEntity(entity)) {
-      s"$appName.${entity.category}.${entity.name}"
-    } else {
-      s"$appName.${entity.category}.${entity.name}.${metricKey.name}"
-    }
+      time.getEpochSecond)
   }
 }
 
-trait FluentLoggerSenderProvider {
-  def sender(host: String, port: Int): Sender = new ScalaRawSocketSender(host, port, 3 * 1000, 1 * 1024 * 1024)
-}
+object FluentdReporter {
+  private val logger = LoggerFactory.getLogger(classOf[FluentdReporter])
 
-case class HistogramStatsBuilder(config: HistogramStatsConfig) {
-  import HistogramStatsBuilder.RichHistogramSnapshot
-  import HistogramStatsConfig._
+  private[fluentd] def readConfiguration(config: Config): Configuration = {
+    val fluentdConfig = config.getConfig("kamon.fluentd")
+    val host = fluentdConfig.getString("hostname")
+    val port = fluentdConfig.getInt("port")
 
-  // this returns List of ("statsName", "value as String")
-  def buildStats(hs: Histogram.Snapshot): List[(String, Any)] = {
-    config.subscriptions.foldRight(List.empty[(String, Any)]) { (name, res) ⇒
-      name match {
-        case COUNT   ⇒ (name, hs.numberOfMeasurements) :: res
-        case MAX     ⇒ (name, hs.max) :: res
-        case MIN     ⇒ (name, hs.min) :: res
-        case AVERAGE ⇒ (name, hs.average) :: res
-        case PERCENTILES ⇒ {
-          config.percentiles.foldRight(List.empty[(String, Any)]) { (p, _res) ⇒
-            val pStr = if (p.toString.matches("[0-9]+\\.[0]+")) p.toInt.toString else p.toString.replace(".", "_")
-            (name + "." + pStr, hs.percentile(p)) :: _res
-          } ++ res
-        }
-      }
-    }
+    val appName = config.getString("application-name")
+    val tag = fluentdConfig.getString("tag")
+
+//    val subscriptions = fluentdConfig.getConfig("subscriptions")
+//    val histogramStatsConfig = new HistogramStatsConfig(
+//      fluentdConfig.getStringList("histogram-stats.subscription").asScala.toList,
+//      fluentdConfig.getDoubleList("histogram-stats.percentiles").asScala.toList.map(_.toDouble))
+    //    val subscriber = buildMetricsListener(flushInterval, tickInterval, tag, host, port, histogramStatsConfig) todo
+    //    subscriptions.firstLevelKeys foreach { subscriptionCategory ⇒
+    //      subscriptions.getStringList(subscriptionCategory).asScala.foreach { pattern ⇒
+    //        Kamon.metrics.subscribe(subscriptionCategory, pattern, subscriber, permanently = true)
+    //      }
+    //    }
+    Configuration(host, port, tag, appName)
   }
 }
 
-object HistogramStatsBuilder {
 
-  implicit class RichHistogramSnapshot(histogram: Histogram.Snapshot) {
-    def average: Double = {
-      if (histogram.numberOfMeasurements == 0) 0D
-      else histogram.sum / histogram.numberOfMeasurements
-    }
-  }
-
+private[fluentd] class FluentdWriter(val config: Configuration) {
+  lazy val fluentd: FluentLogger = FluentLogger(config.tag, new ScalaRawSocketSender(config.host, config.port, 3 * 1000, 1 * 1024 * 1024))
 }
+private[fluentd] case class Configuration(host: String, port: Int,
+                                          tag: String, appName: String
+                                          //subscriptions:Config,histogramStatsConfig:HistogramStatsConfig
+                                         )
 
-class HistogramStatsConfig(_subscriptions: List[String], _percentiles: List[Double]) {
-  import HistogramStatsConfig._
-  val subscriptions: List[String] = {
-    if (_subscriptions.contains("*")) {
-      supported
-    } else {
-      assert(_subscriptions.forall(supported.contains(_)), s"supported stats values are: ${supported.mkString(",")}")
-      _subscriptions
-    }
-  }
-  val percentiles: List[Double] = {
-    if (subscriptions.contains("percentiles")) {
-      assert(_percentiles.forall(p ⇒ 0.0 <= p && p <= 100.0), "every percentile point p must be 0.0 <= p <= 100.0")
-    }
-    _percentiles
-  }
-}
-
-object HistogramStatsConfig {
-  val COUNT = "count"; val MIN = "min"; val MAX = "max"
-  val AVERAGE = "average"; val PERCENTILES = "percentiles"
-  private val supported = List(COUNT, MIN, MAX, AVERAGE, PERCENTILES)
-}
+//case class HistogramStatsBuilder(config: HistogramStatsConfig) {
+//  import HistogramStatsBuilder.RichHistogramSnapshot
+//  import HistogramStatsConfig._
+//
+//  // this returns List of ("statsName", "value as String")
+//  def buildStats(hs: Histogram.Snapshot): List[(String, Any)] = {
+//    config.subscriptions.foldRight(List.empty[(String, Any)]) { (name, res) ⇒
+//      name match {
+//        case COUNT ⇒ (name, hs.numberOfMeasurements) :: res
+//        case MAX ⇒ (name, hs.max) :: res
+//        case MIN ⇒ (name, hs.min) :: res
+//        case AVERAGE ⇒ (name, hs.average) :: res
+//        case PERCENTILES ⇒ {
+//          config.percentiles.foldRight(List.empty[(String, Any)]) { (p, _res) ⇒
+//            val pStr = if (p.toString.matches("[0-9]+\\.[0]+")) p.toInt.toString else p.toString.replace(".", "_")
+//            (name + "." + pStr, hs.percentile(p)) :: _res
+//          } ++ res
+//        }
+//      }
+//    }
+//  }
+//}
+//
+//object HistogramStatsBuilder {
+//
+//  implicit class RichHistogramSnapshot(histogram: Histogram.Snapshot) {
+//    def average: Double = {
+//      if (histogram.numberOfMeasurements == 0) 0D
+//      else histogram.sum / histogram.numberOfMeasurements
+//    }
+//  }
+//
+//}
+//
+//class HistogramStatsConfig(_subscriptions: List[String], _percentiles: List[Double]) {
+//  import HistogramStatsConfig._
+//  val subscriptions: List[String] = {
+//    if (_subscriptions.contains("*")) {
+//      supported
+//    } else {
+//      assert(_subscriptions.forall(supported.contains(_)), s"supported stats values are: ${supported.mkString(",")}")
+//      _subscriptions
+//    }
+//  }
+//  val percentiles: List[Double] = {
+//    if (subscriptions.contains("percentiles")) {
+//      assert(_percentiles.forall(p ⇒ 0.0 <= p && p <= 100.0), "every percentile point p must be 0.0 <= p <= 100.0")
+//    }
+//    _percentiles
+//  }
+//}
+//
+//object HistogramStatsConfig {
+//  val COUNT = "count"
+//  val MIN = "min"
+//  val MAX = "max"
+//  val AVERAGE = "average"
+//  val PERCENTILES = "percentiles"
+//  val supported = List(COUNT, MIN, MAX, AVERAGE, PERCENTILES)
+//}

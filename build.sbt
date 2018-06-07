@@ -13,22 +13,35 @@
  * =========================================================================================
  */
 
+import scalariform.formatter.preferences._
+import com.typesafe.sbt.SbtScalariform.ScalariformKeys
 
-val akkaVersion210    = "2.3.16"
-val akkaVersion212    = "2.4.16"
-
-val kamonCore         = "io.kamon"                  %%  "kamon-core"            % "0.6.7"
+val kamonCore         = "io.kamon"               %% "kamon-core"          % "1.1.2"
+val kamonTestKit      = "io.kamon"               %% "kamon-testkit"       % "1.1.2"
 val fluentdLogger     = "org.fluentd"               %%  "fluent-logger-scala"   % "0.7.0"
-val easyMock          = "org.easymock"              %   "easymock"              % "3.2"
+//val easyMock          = "org.easymock"              %   "easymock"              % "3.2"  //todo up or rm
 
-name := "kamon-fluentd"
+lazy val root = (project in file("."))
+    .settings(name := "kamon-fluentd")
+    .settings(
+      libraryDependencies ++=
+      compileScope(kamonCore, fluentdLogger, scalaCompact.value) ++
+      testScope(scalatest, slf4jApi, slf4jnop, kamonCore, kamonTestKit),
+      ScalariformKeys.preferences := formatSettings(ScalariformKeys.preferences.value))
 
-parallelExecution in Test in Global := false
 
-crossScalaVersions := Seq("2.11.8", "2.12.1")
+def scalaCompact = Def.setting {
+  scalaBinaryVersion.value match {
+    case "2.10" | "2.11" => "org.scala-lang.modules" %% "scala-java8-compat" % "0.5.0"
+    case "2.12"          => "org.scala-lang.modules" %% "scala-java8-compat" % "0.8.0"
+  }
+}
 
-libraryDependencies ++=
-  compileScope(kamonCore, akkaDependency("actor").value, fluentdLogger) ++
-  testScope(scalatest, akkaDependency("testkit").value, easyMock, slf4jApi, slf4jnop)
-
-resolvers += Resolver.bintrayRepo("kamon-io", "releases")
+def formatSettings(prefs: IFormattingPreferences) = prefs
+    .setPreference(AlignParameters, true)
+    .setPreference(AlignSingleLineCaseStatements, true)
+    .setPreference(AlignSingleLineCaseStatements.MaxArrowIndent, 60)
+    .setPreference(DoubleIndentConstructorArguments, false)
+    .setPreference(DoubleIndentMethodDeclaration, false)
+    .setPreference(DanglingCloseParenthesis, Preserve)
+    .setPreference(NewlineAtEndOfFile, true)
